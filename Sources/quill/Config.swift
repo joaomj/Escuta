@@ -1,10 +1,15 @@
 import Foundation
+import EscutaCore
 
 /// Optional user config at ~/.config/quill/config.json:
 ///
 ///     {
 ///       "recordings_dir": "~/Recordings",
-///       "transcription": { "enabled": true, "engine": "whisperkit" },
+///       "transcription": {
+///         "enabled": true,
+///         "engine": "whisperkit",
+///         "language": "automatic"
+///       },
 ///       "mic_voice_processing": true,
 ///       "on_stop": "my-hook"
 ///     }
@@ -42,6 +47,14 @@ enum Config {
     /// warns and falls back for anything else.
     static func transcriptionEngine() -> String {
         transcription()?["engine"] as? String ?? "whisperkit"
+    }
+
+    static func languagePreference() -> LanguagePreference {
+        LanguageConfiguration.read(from: path)
+    }
+
+    static func setLanguagePreference(_ preference: LanguagePreference) throws {
+        try LanguageConfiguration.write(preference, to: path)
     }
 
     static let productionWhisperModel = "large-v3-v20240930_626MB"

@@ -14,6 +14,9 @@ protocol TranscriptionEngine: Sendable {
     /// Concrete model identifier recorded as transcript.json provenance.
     var model: String { get }
     func prepare() async throws
-    func transcribe(_ audio: URL) async throws -> [RelativeTranscriptSegment]
+    func transcribe(
+        _ audio: URL,
+        language: LanguagePreference
+    ) async throws -> EngineTranscript
     func release() async
 }

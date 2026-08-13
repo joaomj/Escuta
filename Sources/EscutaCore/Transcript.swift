@@ -72,13 +72,14 @@ public enum TranscriptMerger {
 }
 
 public struct TranscriptDocument: Codable, Equatable, Sendable {
-    public static let currentSchemaVersion = 1
+    public static let currentSchemaVersion = 2
 
     public let schemaVersion: Int
     public let engine: String
     public let engineVersion: String
     public let model: String
     public let createdAt: String
+    public let tracks: [TranscriptTrackInfo]
     public let segments: [TranscriptSegment]
     public let warnings: [String]
 
@@ -87,6 +88,7 @@ public struct TranscriptDocument: Codable, Equatable, Sendable {
         engineVersion: String,
         model: String,
         createdAt: String,
+        tracks: [TranscriptTrackInfo] = [],
         segments: [TranscriptSegment],
         warnings: [String] = [],
         schemaVersion: Int = Self.currentSchemaVersion
@@ -96,6 +98,7 @@ public struct TranscriptDocument: Codable, Equatable, Sendable {
         self.engineVersion = engineVersion
         self.model = model
         self.createdAt = createdAt
+        self.tracks = tracks
         self.segments = segments
         self.warnings = warnings
     }
@@ -141,6 +144,7 @@ public struct TranscriptDocument: Codable, Equatable, Sendable {
         case engineVersion = "engine_version"
         case model
         case createdAt = "created_at"
+        case tracks
         case segments
         case warnings
     }

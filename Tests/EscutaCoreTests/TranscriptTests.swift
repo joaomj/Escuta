@@ -39,6 +39,12 @@ private func testWritesTranscriptJSONAndReadableMarkdown() throws {
         engineVersion: "test-version",
         model: "test-model",
         createdAt: "2026-08-12T00:00:00Z",
+        tracks: [TranscriptTrackInfo(
+            name: "mic",
+            speaker: "me",
+            language: "pt",
+            languageSource: .userHint
+        )],
         segments: [
             TranscriptSegment(
                 speaker: "me",
@@ -60,8 +66,12 @@ private func testWritesTranscriptJSONAndReadableMarkdown() throws {
         encoding: .utf8
     )
 
-    try expect(json?["schema_version"] as? Int == 1, "transcript schema")
+    try expect(json?["schema_version"] as? Int == 2, "transcript schema")
     try expect(json?["engine"] as? String == "test-engine", "engine metadata")
+    try expect(json?["engine_version"] as? String == "test-version", "engine version metadata")
+    let tracks = json?["tracks"] as? [[String: Any]]
+    try expect(tracks?.first?["language"] as? String == "pt", "track language")
+    try expect(tracks?.first?["language_source"] as? String == "user_hint", "track language source")
     try expect(markdown.contains("[1:01:01] me:"), "long timestamp")
     try expect(
         markdown.contains("warning: system track unavailable"),

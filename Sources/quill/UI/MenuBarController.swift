@@ -1,4 +1,5 @@
 import AppKit
+import EscutaCore
 
 /// Status bar item in the top-right of the menu bar. Shows recording state at
 /// a glance and provides the only persistent control surface for the daemon
@@ -9,12 +10,15 @@ final class MenuBarController {
     private let stateLabel: NSMenuItem
     private let transcriptionLabel: NSMenuItem
     private let toggleItem: NSMenuItem
+    private let languageItem: NSMenuItem
+    private var languageMenuItems: [LanguagePreference: NSMenuItem] = [:]
 
     var onToggle: (() -> Void)?
     var onOpenFolder: (() -> Void)?
     var onQuit: (() -> Void)?
+    var onLanguagePreference: ((LanguagePreference) -> Void)?
 
-    init() {
+    init(language: LanguagePreference) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
         let menu = NSMenu()
@@ -47,6 +51,24 @@ final class MenuBarController {
 
         menu.addItem(.separator())
 
+        languageItem = NSMenuItem(title: "Language", action: nil, keyEquivalent: "")
+        let languageMenu = NSMenu()
+        for preference in LanguagePreference.allCases {
+            let item = NSMenuItem(
+                title: preference.displayName,
+                action: #selector(languageClicked),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = preference.rawValue
+            languageMenu.addItem(item)
+            languageMenuItems[preference] = item
+        }
+        languageItem.submenu = languageMenu
+        menu.addItem(languageItem)
+
+        menu.addItem(.separator())
+
         let quit = NSMenuItem(
             title: "Quit quill",
             action: #selector(quitClicked),
@@ -59,6 +81,7 @@ final class MenuBarController {
         }
 
         statusItem.menu = menu
+        updateLanguage(language)
 
         if let button = statusItem.button {
             let image = Self.featherImage()
@@ -86,6 +109,13 @@ final class MenuBarController {
         transcriptionLabel.isHidden = text == nil
     }
 
+    func updateLanguage(_ preference: LanguagePreference) {
+        languageItem.title = "Language: \(preference.displayName)"
+        for (candidate, item) in languageMenuItems {
+            item.state = candidate == preference ? .on : .off
+        }
+    }
+
     // Inlined Lucide feather SVG. Keeping it in source means the executable
     // has no separate resource bundle to install alongside it — true
     // single-binary.
@@ -111,4 +141,11 @@ final class MenuBarController {
     @objc private func toggleClicked() { onToggle?() }
     @objc private func openFolderClicked() { onOpenFolder?() }
     @objc private func quitClicked() { onQuit?() }
+    @objc private func languageClicked(_ sender: NSMenuItem) {
+        guard
+            let rawValue = sender.representedObject as? String,
+            let preference = LanguagePreference(rawValue: rawValue)
+        else { return }
+        onLanguagePreference?(preference)
+    }
 }

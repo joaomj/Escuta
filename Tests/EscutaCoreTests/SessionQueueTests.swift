@@ -72,6 +72,9 @@ private func testCheckpointMatchesTrackAndEngineIdentity() throws {
         engine: "test-engine",
         engineVersion: "test-version",
         model: "test-model",
+        requestedLanguage: .automatic,
+        language: "en",
+        languageSource: .detected,
         createdAt: "2026-08-12T00:00:00Z",
         segments: [RelativeTranscriptSegment(start: 0, end: 1, text: "hello")]
     )
@@ -81,7 +84,8 @@ private func testCheckpointMatchesTrackAndEngineIdentity() throws {
             track,
             engine: "test-engine",
             engineVersion: "test-version",
-            model: "test-model"
+            model: "test-model",
+            requestedLanguage: .automatic
         ),
         "matching checkpoint"
     )
@@ -90,7 +94,8 @@ private func testCheckpointMatchesTrackAndEngineIdentity() throws {
             track,
             engine: "other-engine",
             engineVersion: "test-version",
-            model: "test-model"
+            model: "test-model",
+            requestedLanguage: .automatic
         ),
         "engine checkpoint mismatch"
     )
@@ -99,7 +104,8 @@ private func testCheckpointMatchesTrackAndEngineIdentity() throws {
             track,
             engine: "test-engine",
             engineVersion: "test-version",
-            model: "other-model"
+            model: "other-model",
+            requestedLanguage: .automatic
         ),
         "model checkpoint mismatch"
     )

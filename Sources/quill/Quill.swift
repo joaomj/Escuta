@@ -1,5 +1,6 @@
 import AppKit
 import ArgumentParser
+import EscutaCore
 import Foundation
 
 @main
@@ -79,7 +80,7 @@ struct Doctor: ParsableCommand {
 @MainActor
 final class AppController {
     private let root: URL
-    private let menuBar = MenuBarController()
+    private let menuBar = MenuBarController(language: Config.languagePreference())
     private let transcription = TranscriptionCoordinator()
     private var session: RecordingSession?
     private var ticker: Timer?
@@ -89,6 +90,9 @@ final class AppController {
         menuBar.onToggle = { [weak self] in self?.toggle() }
         menuBar.onOpenFolder = { [weak self] in self?.openFolder() }
         menuBar.onQuit = { [weak self] in self?.shutdown() }
+        menuBar.onLanguagePreference = { [weak self] preference in
+            self?.setLanguagePreference(preference)
+        }
         menuBar.update(recording: false, elapsed: nil)
 
         Task { [transcription, root] in
@@ -183,6 +187,15 @@ final class AppController {
     private func openFolder() {
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         NSWorkspace.shared.open(root)
+    }
+
+    private func setLanguagePreference(_ preference: LanguagePreference) {
+        do {
+            try Config.setLanguagePreference(preference)
+            menuBar.updateLanguage(preference)
+        } catch {
+            notifyUser(title: "quill — language was not saved", body: "\(error)")
+        }
     }
 
     private static func format(_ interval: TimeInterval) -> String {

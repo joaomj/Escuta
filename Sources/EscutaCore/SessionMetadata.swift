@@ -128,6 +128,9 @@ public struct TrackTranscriptCheckpoint: Codable, Equatable, Sendable {
     public let engine: String
     public let engineVersion: String
     public let model: String
+    public let requestedLanguage: LanguagePreference
+    public let language: String
+    public let languageSource: TranscriptLanguageSource
     public let createdAt: String
     public let segments: [RelativeTranscriptSegment]
 
@@ -139,6 +142,9 @@ public struct TrackTranscriptCheckpoint: Codable, Equatable, Sendable {
         engine: String,
         engineVersion: String,
         model: String,
+        requestedLanguage: LanguagePreference,
+        language: String,
+        languageSource: TranscriptLanguageSource,
         createdAt: String,
         segments: [RelativeTranscriptSegment],
         schemaVersion: Int = Self.currentSchemaVersion
@@ -151,6 +157,9 @@ public struct TrackTranscriptCheckpoint: Codable, Equatable, Sendable {
         self.engine = engine
         self.engineVersion = engineVersion
         self.model = model
+        self.requestedLanguage = requestedLanguage
+        self.language = language
+        self.languageSource = languageSource
         self.createdAt = createdAt
         self.segments = segments
     }
@@ -159,7 +168,8 @@ public struct TrackTranscriptCheckpoint: Codable, Equatable, Sendable {
         _ sessionTrack: SessionTrack,
         engine: String,
         engineVersion: String,
-        model: String
+        model: String,
+        requestedLanguage: LanguagePreference
     ) -> Bool {
         track == sessionTrack.name
             && file == sessionTrack.file
@@ -168,6 +178,7 @@ public struct TrackTranscriptCheckpoint: Codable, Equatable, Sendable {
             && self.engine == engine
             && self.engineVersion == engineVersion
             && self.model == model
+            && self.requestedLanguage == requestedLanguage
     }
 
     public func write(to directory: URL) throws {

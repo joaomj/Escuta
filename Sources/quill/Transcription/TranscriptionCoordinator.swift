@@ -127,8 +127,10 @@ actor TranscriptionCoordinator {
         try meta.write(to: dir)
 
         let engine = try await preparedEngine()
+        let requestedLanguage = Config.languagePreference()
 
         var tracks: [TranscriptTrack] = []
+        var trackInfo: [TranscriptTrackInfo] = []
         var warnings = meta.warnings
         for track in meta.tracks {
             let audio = dir.appendingPathComponent(track.file)
@@ -139,12 +141,19 @@ actor TranscriptionCoordinator {
                 track,
                 engine: engine.name,
                 engineVersion: engine.version,
-                model: engine.model
+                model: engine.model,
+                requestedLanguage: requestedLanguage
             ) {
                 tracks.append(TranscriptTrack(
                     speaker: checkpoint.speaker,
                     offsetMs: checkpoint.offsetMs,
                     segments: checkpoint.segments
+                ))
+                trackInfo.append(TranscriptTrackInfo(
+                    name: checkpoint.track,
+                    speaker: checkpoint.speaker,
+                    language: checkpoint.language,
+                    languageSource: checkpoint.languageSource
                 ))
                 log(dir, "resumed \(track.file) from checkpoint")
                 continue
@@ -157,9 +166,9 @@ actor TranscriptionCoordinator {
                 continue
             }
             log(dir, "transcribing \(track.file) (\(engine.name))")
-            let segments: [RelativeTranscriptSegment]
+            let result: EngineTranscript
             do {
-                segments = try await engine.transcribe(audio)
+                result = try await engine.transcribe(audio, language: requestedLanguage)
             } catch {
                 let warning = "\(track.name) track transcription failed"
                 if !warnings.contains(warning) { warnings.append(warning) }
@@ -174,13 +183,22 @@ actor TranscriptionCoordinator {
                 engine: engine.name,
                 engineVersion: engine.version,
                 model: engine.model,
+                requestedLanguage: requestedLanguage,
+                language: result.language,
+                languageSource: result.languageSource,
                 createdAt: ISO8601DateFormatter().string(from: Date()),
-                segments: segments
+                segments: result.segments
             ).write(to: dir.appendingPathComponent("checkpoints", isDirectory: true))
             tracks.append(TranscriptTrack(
                 speaker: track.speaker,
                 offsetMs: track.offsetMs,
-                segments: segments
+                segments: result.segments
+            ))
+            trackInfo.append(TranscriptTrackInfo(
+                name: track.name,
+                speaker: track.speaker,
+                language: result.language,
+                languageSource: result.languageSource
             ))
         }
         guard !tracks.isEmpty else {
@@ -193,6 +211,7 @@ actor TranscriptionCoordinator {
             engineVersion: engine.version,
             model: engine.model,
             createdAt: ISO8601DateFormatter().string(from: Date()),
+            tracks: trackInfo,
             segments: merged,
             warnings: warnings
         )

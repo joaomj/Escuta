@@ -58,13 +58,17 @@ actor WhisperKitEngine: TranscriptionEngine {
         whisperKit = kit
     }
 
-    func transcribe(_ audio: URL) async throws -> [RelativeTranscriptSegment] {
+    func transcribe(
+        _ audio: URL,
+        language: LanguagePreference
+    ) async throws -> EngineTranscript {
         guard let whisperKit else { throw EngineError.notPrepared }
         try validateAudio(audio)
 
         let options = DecodingOptions(
             task: .transcribe,
-            detectLanguage: true,
+            language: language.whisperHint,
+            detectLanguage: language == .automatic,
             wordTimestamps: false
         )
         let input = AudioInputOptions(audioLoadingMode: .incremental)
@@ -81,7 +85,7 @@ actor WhisperKitEngine: TranscriptionEngine {
         )
         guard !results.isEmpty else { throw EngineError.noResults(audio) }
 
-        return results.flatMap { result in
+        let segments: [RelativeTranscriptSegment] = results.flatMap { result in
             result.segments.compactMap { segment in
                 let text = segment.text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
                 guard !text.isEmpty else { return nil }
@@ -92,6 +96,12 @@ actor WhisperKitEngine: TranscriptionEngine {
                 )
             }
         }
+        let detectedLanguage = language.whisperHint ?? results.first?.language ?? "unknown"
+        return EngineTranscript(
+            segments: segments,
+            language: detectedLanguage,
+            languageSource: language == .automatic ? .detected : .userHint
+        )
     }
 
     func release() async {

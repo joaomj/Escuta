@@ -94,7 +94,8 @@ Optional, at `~/.config/quill/config.json`:
   "transcription": {
     "enabled": true,
     "engine": "whisperkit",
-    "model": "large-v3-v20240930_626MB"
+    "model": "large-v3-v20240930_626MB",
+    "language": "automatic"
   },
   "on_stop": "my-hook"
 }
@@ -103,6 +104,8 @@ Optional, at `~/.config/quill/config.json`:
 - `recordings_dir` — where sessions land. Resolution order: `--out` flag >
   config > `~/Recordings`.
 - `transcription.enabled` — set `false` to just record.
+- `transcription.language` — `automatic` by default, or `pt` for Portuguese
+  (Brazil) and `en` for English. The same setting is available in the menu.
 - `mic_voice_processing` — Apple's echo cancellation on the mic (default off).
   Set `true` when recording meetings through the speakers, so playback doesn't
   bleed into the mic track and get transcribed twice as "me". The trade: while
