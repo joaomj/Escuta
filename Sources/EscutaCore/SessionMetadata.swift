@@ -126,6 +126,7 @@ public struct TrackTranscriptCheckpoint: Codable, Equatable, Sendable {
     public let speaker: String
     public let offsetMs: Int
     public let engine: String
+    public let engineVersion: String
     public let model: String
     public let createdAt: String
     public let segments: [RelativeTranscriptSegment]
@@ -136,6 +137,7 @@ public struct TrackTranscriptCheckpoint: Codable, Equatable, Sendable {
         speaker: String,
         offsetMs: Int,
         engine: String,
+        engineVersion: String,
         model: String,
         createdAt: String,
         segments: [RelativeTranscriptSegment],
@@ -147,17 +149,24 @@ public struct TrackTranscriptCheckpoint: Codable, Equatable, Sendable {
         self.speaker = speaker
         self.offsetMs = offsetMs
         self.engine = engine
+        self.engineVersion = engineVersion
         self.model = model
         self.createdAt = createdAt
         self.segments = segments
     }
 
-    public func matches(_ sessionTrack: SessionTrack, engine: String, model: String) -> Bool {
+    public func matches(
+        _ sessionTrack: SessionTrack,
+        engine: String,
+        engineVersion: String,
+        model: String
+    ) -> Bool {
         track == sessionTrack.name
             && file == sessionTrack.file
             && speaker == sessionTrack.speaker
             && offsetMs == sessionTrack.offsetMs
             && self.engine == engine
+            && self.engineVersion == engineVersion
             && self.model == model
     }
 

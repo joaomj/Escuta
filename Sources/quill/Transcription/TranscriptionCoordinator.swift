@@ -135,7 +135,12 @@ actor TranscriptionCoordinator {
             if let checkpoint = try? TrackTranscriptCheckpoint.read(
                 track: track.name,
                 from: dir.appendingPathComponent("checkpoints", isDirectory: true)
-            ), checkpoint.matches(track, engine: engine.name, model: engine.model) {
+            ), checkpoint.matches(
+                track,
+                engine: engine.name,
+                engineVersion: engine.version,
+                model: engine.model
+            ) {
                 tracks.append(TranscriptTrack(
                     speaker: checkpoint.speaker,
                     offsetMs: checkpoint.offsetMs,
@@ -167,6 +172,7 @@ actor TranscriptionCoordinator {
                 speaker: track.speaker,
                 offsetMs: track.offsetMs,
                 engine: engine.name,
+                engineVersion: engine.version,
                 model: engine.model,
                 createdAt: ISO8601DateFormatter().string(from: Date()),
                 segments: segments
@@ -184,6 +190,7 @@ actor TranscriptionCoordinator {
 
         let transcript = TranscriptDocument(
             engine: engine.name,
+            engineVersion: engine.version,
             model: engine.model,
             createdAt: ISO8601DateFormatter().string(from: Date()),
             segments: merged,
@@ -200,12 +207,12 @@ actor TranscriptionCoordinator {
     private func preparedEngine() async throws -> TranscriptionEngine {
         if let engine { return engine }
         let configured = Config.transcriptionEngine()
-        if configured != "parakeet" {
+        if configured != "whisperkit" {
             FileHandle.standardError.write(Data(
-                "warning: unknown transcription engine \"\(configured)\" — using parakeet\n".utf8
+                "warning: unknown transcription engine \"\(configured)\" — using whisperkit\n".utf8
             ))
         }
-        let engine = ParakeetEngine()
+        let engine = WhisperKitEngine()
         try await engine.prepare()
         self.engine = engine
         return engine

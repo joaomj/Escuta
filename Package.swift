@@ -6,7 +6,7 @@ let package = Package(
     platforms: [.macOS(.v15)],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0"),
-        .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.7.0"),
+        .package(url: "https://github.com/argmaxinc/argmax-oss-swift.git", from: "1.1.0"),
     ],
     targets: [
         .target(
@@ -17,7 +17,7 @@ let package = Package(
             dependencies: [
                 "EscutaCore",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
-                .product(name: "FluidAudio", package: "FluidAudio"),
+                .product(name: "WhisperKit", package: "argmax-oss-swift"),
             ],
             exclude: ["Info.plist"],
             linkerSettings: [

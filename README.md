@@ -67,12 +67,11 @@ written is still readable.
 
 ## Transcription
 
-Built in, on-device, automatic. The default engine is **Parakeet TDT 0.6B v2**
-(English) via [FluidAudio](https://github.com/FluidInference/FluidAudio)'s
-Core ML port — roughly 20 seconds per hour of audio on Apple Silicon. Models
-(~600 MB) download once on first transcription; `quill doctor` tells you
-whether they're already cached so you're never downloading after an important
-meeting.
+Built in, on-device, automatic. The default engine is **WhisperKit** with the
+multilingual `large-v3-v20240930_626MB` Core ML model. The model and tokenizer
+are stored in `~/Library/Application Support/quill/WhisperKit`. The setup flow
+downloads them before transcription; `quill doctor` tells you whether they are
+already cached so you are never downloading after an important meeting.
 
 Each track is transcribed separately, shifted by its start offset so both
 share one clock, and merged by timestamp. Jobs run in a serial queue — you can
@@ -81,8 +80,9 @@ on next launch (the filesystem is the queue: a session with `meta.json` but no
 `transcript.json` is pending). Failures append to the session's
 `transcribe.log` and never block later jobs.
 
-The engine sits behind a small protocol; a Whisper engine (WhisperKit
-large-v3-turbo) is planned as the fallback / re-transcription option.
+The engine sits behind a small protocol. Set the model to `tiny` in the
+transcription config for development checks; production defaults to
+`large-v3-v20240930_626MB`.
 
 ## Config
 
@@ -91,7 +91,11 @@ Optional, at `~/.config/quill/config.json`:
 ```json
 {
   "recordings_dir": "~/Recordings",
-  "transcription": { "enabled": true, "engine": "parakeet" },
+  "transcription": {
+    "enabled": true,
+    "engine": "whisperkit",
+    "model": "large-v3-v20240930_626MB"
+  },
   "on_stop": "my-hook"
 }
 ```
@@ -127,7 +131,7 @@ quill install --uninstall
   system audio capture via a private aggregate device
 - **AVAudioEngine** — mic capture
 - **AVAudioFile** — streaming AAC encode into CAF
-- **FluidAudio / Parakeet** — on-device Core ML transcription
+- **WhisperKit** — multilingual on-device Core ML transcription
 - **NSStatusItem** — the whole UI
 
 ## Gotchas
@@ -137,7 +141,7 @@ quill install --uninstall
   per-process picker if it bothers you).
 - If recordings come out silent, check System Settings → Privacy & Security →
   Screen & System Audio Recording.
-- Parakeet v2 is English-only. Other languages will come with the Whisper
-  engine.
+- The first model download needs an internet connection. Transcription does
+  not need a Hugging Face credential and runs locally after the model is cached.
 - The binary embeds its Info.plist (`__TEXT,__info_plist`) so TCC can
   attribute permissions to quill itself when running as a LaunchAgent.

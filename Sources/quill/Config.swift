@@ -4,7 +4,7 @@ import Foundation
 ///
 ///     {
 ///       "recordings_dir": "~/Recordings",
-///       "transcription": { "enabled": true, "engine": "parakeet" },
+///       "transcription": { "enabled": true, "engine": "whisperkit" },
 ///       "mic_voice_processing": true,
 ///       "on_stop": "my-hook"
 ///     }
@@ -38,10 +38,41 @@ enum Config {
         transcription()?["enabled"] as? Bool ?? true
     }
 
-    /// Configured engine name. Only "parakeet" ships today; the coordinator
+    /// Configured engine name. Only "whisperkit" ships today; the coordinator
     /// warns and falls back for anything else.
     static func transcriptionEngine() -> String {
-        transcription()?["engine"] as? String ?? "parakeet"
+        transcription()?["engine"] as? String ?? "whisperkit"
+    }
+
+    static let productionWhisperModel = "large-v3-v20240930_626MB"
+    static let developmentWhisperModel = "tiny"
+
+    static func whisperModel() -> String {
+        guard let configured = transcription()?["model"] as? String else {
+            return productionWhisperModel
+        }
+        switch configured {
+        case productionWhisperModel, developmentWhisperModel:
+            return configured
+        default:
+            FileHandle.standardError.write(Data(
+                "warning: unsupported WhisperKit model \"\(configured)\" — using \(productionWhisperModel)\n".utf8
+            ))
+            return productionWhisperModel
+        }
+    }
+
+    static func whisperModelFolder(model: String = whisperModel()) -> URL {
+        modelRoot().appendingPathComponent("openai_whisper_\(model)", isDirectory: true)
+    }
+
+    static func whisperTokenizerFolder() -> URL {
+        modelRoot().appendingPathComponent("tokenizer", isDirectory: true)
+    }
+
+    private static func modelRoot() -> URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/quill/WhisperKit", isDirectory: true)
     }
 
     private static func transcription() -> [String: Any]? {

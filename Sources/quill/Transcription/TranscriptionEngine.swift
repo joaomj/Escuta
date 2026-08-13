@@ -9,6 +9,8 @@ import EscutaCore
 protocol TranscriptionEngine: Sendable {
     /// Short engine identifier recorded as transcript.json provenance.
     var name: String { get }
+    /// Package or engine version recorded as transcript.json provenance.
+    var version: String { get }
     /// Concrete model identifier recorded as transcript.json provenance.
     var model: String { get }
     func prepare() async throws

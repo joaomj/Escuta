@@ -1,5 +1,4 @@
 import AVFoundation
-import FluidAudio
 import Foundation
 
 enum CheckStatus {
@@ -77,7 +76,7 @@ enum DoctorReport {
     }
 
     /// Never discover a missing model after an important meeting: report
-    /// whether the parakeet models are already in FluidAudio's cache.
+    /// whether the WhisperKit model and tokenizer are already cached.
     static func checkTranscription() -> Check {
         guard Config.transcriptionEnabled() else {
             return Check(
@@ -86,15 +85,31 @@ enum DoctorReport {
                 remediation: nil
             )
         }
-        let cache = AsrModels.defaultCacheDirectory(for: .v2)
-        if AsrModels.modelsExist(at: cache, version: .v2) {
+        let model = Config.whisperModel()
+        if modelFilesExist(at: Config.whisperModelFolder(model: model)),
+           tokenizerFilesExist(at: Config.whisperTokenizerFolder()) {
             return Check(name: "transcription", status: .ok, remediation: nil)
         }
         return Check(
             name: "transcription",
-            status: .warn("parakeet models not downloaded (~600 MB)"),
-            remediation: "downloads automatically on first transcription — record a short test session while online"
+            status: .warn("WhisperKit model \(model) is not downloaded"),
+            remediation: "download the model from the setup menu before transcription"
         )
+    }
+
+    private static func modelFilesExist(at directory: URL) -> Bool {
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else { return false }
+        return ["MelSpectrogram", "AudioEncoder", "TextDecoder"].allSatisfy { name in
+            files.contains { $0.lastPathComponent.hasPrefix(name) }
+        }
+    }
+
+    private static func tokenizerFilesExist(at directory: URL) -> Bool {
+        FileManager.default.fileExists(atPath: directory.appendingPathComponent("tokenizer.json").path)
     }
 
     static func print(_ checks: [Check]) {

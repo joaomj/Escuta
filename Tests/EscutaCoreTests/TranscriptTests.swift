@@ -36,6 +36,7 @@ private func testWritesTranscriptJSONAndReadableMarkdown() throws {
     defer { try? FileManager.default.removeItem(at: directory) }
     let document = TranscriptDocument(
         engine: "test-engine",
+        engineVersion: "test-version",
         model: "test-model",
         createdAt: "2026-08-12T00:00:00Z",
         segments: [

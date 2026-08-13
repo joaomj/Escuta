@@ -70,21 +70,37 @@ private func testCheckpointMatchesTrackAndEngineIdentity() throws {
         speaker: "me",
         offsetMs: 12,
         engine: "test-engine",
+        engineVersion: "test-version",
         model: "test-model",
         createdAt: "2026-08-12T00:00:00Z",
         segments: [RelativeTranscriptSegment(start: 0, end: 1, text: "hello")]
     )
 
     try expect(
-        checkpoint.matches(track, engine: "test-engine", model: "test-model"),
+        checkpoint.matches(
+            track,
+            engine: "test-engine",
+            engineVersion: "test-version",
+            model: "test-model"
+        ),
         "matching checkpoint"
     )
     try expect(
-        !checkpoint.matches(track, engine: "other-engine", model: "test-model"),
+        !checkpoint.matches(
+            track,
+            engine: "other-engine",
+            engineVersion: "test-version",
+            model: "test-model"
+        ),
         "engine checkpoint mismatch"
     )
     try expect(
-        !checkpoint.matches(track, engine: "test-engine", model: "other-model"),
+        !checkpoint.matches(
+            track,
+            engine: "test-engine",
+            engineVersion: "test-version",
+            model: "other-model"
+        ),
         "model checkpoint mismatch"
     )
 }

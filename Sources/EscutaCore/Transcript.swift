@@ -76,6 +76,7 @@ public struct TranscriptDocument: Codable, Equatable, Sendable {
 
     public let schemaVersion: Int
     public let engine: String
+    public let engineVersion: String
     public let model: String
     public let createdAt: String
     public let segments: [TranscriptSegment]
@@ -83,6 +84,7 @@ public struct TranscriptDocument: Codable, Equatable, Sendable {
 
     public init(
         engine: String,
+        engineVersion: String,
         model: String,
         createdAt: String,
         segments: [TranscriptSegment],
@@ -91,6 +93,7 @@ public struct TranscriptDocument: Codable, Equatable, Sendable {
     ) {
         self.schemaVersion = schemaVersion
         self.engine = engine
+        self.engineVersion = engineVersion
         self.model = model
         self.createdAt = createdAt
         self.segments = segments
@@ -116,7 +119,7 @@ public struct TranscriptDocument: Codable, Equatable, Sendable {
         var lines = [
             "# \(title)",
             "",
-            "engine: \(engine) (\(model))",
+            "engine: \(engine) \(engineVersion) (\(model))",
             "",
         ]
         if !warnings.isEmpty {
@@ -135,6 +138,7 @@ public struct TranscriptDocument: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
         case engine
+        case engineVersion = "engine_version"
         case model
         case createdAt = "created_at"
         case segments
