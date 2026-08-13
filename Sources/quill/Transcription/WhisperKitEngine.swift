@@ -103,6 +103,7 @@ actor WhisperKitEngine: TranscriptionEngine {
             task: .transcribe,
             language: language.whisperHint,
             detectLanguage: language == .automatic,
+            skipSpecialTokens: true,
             wordTimestamps: false
         )
         let input = AudioInputOptions(audioLoadingMode: .incremental)
@@ -111,10 +112,7 @@ actor WhisperKitEngine: TranscriptionEngine {
             audioInputOptions: input,
             decodeOptions: options,
             callback: { update in
-                FileHandle.standardError.write(Data(
-                    "whisperkit progress window \(update.windowId)\n".utf8
-                ))
-                let text = update.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                let text = Self.cleanModelText(update.text)
                 progress(text.isEmpty ? "window \(update.windowId)" : text)
                 return true
             }
@@ -123,7 +121,7 @@ actor WhisperKitEngine: TranscriptionEngine {
 
         let segments: [RelativeTranscriptSegment] = results.flatMap { result in
             result.segments.compactMap { segment in
-                let text = segment.text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+                let text = Self.cleanModelText(segment.text)
                 guard !text.isEmpty else { return nil }
                 return RelativeTranscriptSegment(
                     start: TimeInterval(segment.start),
@@ -155,6 +153,16 @@ actor WhisperKitEngine: TranscriptionEngine {
         } catch {
             throw EngineError.unreadableAudio(audio, error)
         }
+    }
+
+    private static func cleanModelText(_ text: String) -> String {
+        text
+            .replacingOccurrences(
+                of: "<\\|[^>]+\\|>",
+                with: "",
+                options: .regularExpression
+            )
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func installModel(from source: URL, to destination: URL) throws {

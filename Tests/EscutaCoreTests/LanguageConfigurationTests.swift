@@ -4,6 +4,7 @@ import EscutaCore
 func runLanguageConfigurationTests() throws {
     try testLanguageDisplayAndWhisperHints()
     try testLanguagePreferenceRoundTrip()
+    try testMissingLanguageDefaultsToPortuguese()
     try testInvalidLanguageDefaultsToAutomatic()
     try testWritingLanguagePreservesConfiguration()
 }
@@ -41,6 +42,24 @@ private func testInvalidLanguageDefaultsToAutomatic() throws {
     try expect(
         LanguageConfiguration.read(from: file) == .automatic,
         "invalid language defaults to automatic"
+    )
+}
+
+private func testMissingLanguageDefaultsToPortuguese() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let missing = directory.appendingPathComponent("missing.json")
+    try expect(
+        LanguageConfiguration.read(from: missing) == .portuguese,
+        "missing language defaults to Portuguese"
+    )
+
+    let file = directory.appendingPathComponent("config.json")
+    try JSONSerialization.data(withJSONObject: ["transcription": [:]])
+        .write(to: file)
+    try expect(
+        LanguageConfiguration.read(from: file) == .portuguese,
+        "empty language defaults to Portuguese"
     )
 }
 

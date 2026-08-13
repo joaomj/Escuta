@@ -8,7 +8,7 @@ import EscutaCore
 ///       "transcription": {
 ///         "enabled": true,
 ///         "engine": "whisperkit",
-///         "language": "automatic"
+///         "language": "pt"
 ///       },
 ///       "mic_voice_processing": true,
 ///       "on_stop": "my-hook"

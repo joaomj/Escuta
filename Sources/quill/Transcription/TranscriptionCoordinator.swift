@@ -10,6 +10,14 @@ import EscutaCore
 /// just retries on next run. Failures append to the session's transcribe.log
 /// and never block later jobs.
 actor TranscriptionCoordinator {
+    private static let silentPeakThreshold: Float = 0.001
+
+    enum Outcome: Sendable {
+        case completed(URL)
+        case failed(URL)
+        case disabled
+    }
+
     enum Status: Sendable {
         case idle
         case waitingForModel(model: String, queued: Int)
@@ -28,6 +36,7 @@ actor TranscriptionCoordinator {
     private var lastFailureDirectory: URL?
     private var statusHandler: (@Sendable (Status) -> Void)?
     private var downloading = false
+    private var waiters: [String: CheckedContinuation<Outcome, Never>] = [:]
 
     func setStatusHandler(_ handler: @escaping @Sendable (Status) -> Void) {
         statusHandler = handler
@@ -42,6 +51,19 @@ actor TranscriptionCoordinator {
         }
         appendIfNeeded(sessionDir)
         drainIfIdle()
+    }
+
+    func transcribeAndWait(_ sessionDir: URL) async -> Outcome {
+        guard Config.transcriptionEnabled() else {
+            runHook(for: sessionDir)
+            return .disabled
+        }
+
+        return await withCheckedContinuation { continuation in
+            waiters[sessionDir.standardizedFileURL.path] = continuation
+            appendIfNeeded(sessionDir)
+            drainIfIdle()
+        }
     }
 
     /// Start the explicitly approved model download. Pending sessions remain
@@ -145,6 +167,7 @@ actor TranscriptionCoordinator {
                 ))
                 notifyUser(title: "quill — transcript ready", body: dir.lastPathComponent)
                 runHook(for: dir)
+                finishWaiter(for: dir, outcome: .completed(dir.appendingPathComponent("transcript.md")))
             } catch {
                 markFailed(dir, error: error)
                 log(dir, "transcription failed: \(error)")
@@ -159,6 +182,7 @@ actor TranscriptionCoordinator {
                     title: "quill — transcription failed",
                     body: "\(dir.lastPathComponent) — \(dir.appendingPathComponent("transcribe.log").path)"
                 )
+                finishWaiter(for: dir, outcome: .failed(dir.appendingPathComponent("transcribe.log")))
             }
         }
         activeSession = nil
@@ -218,10 +242,16 @@ actor TranscriptionCoordinator {
                 continue
             }
 
-            guard readableAudio(at: audio) else {
+            guard let audioStatus = audioStatus(at: audio) else {
                 let warning = "\(track.name) track unavailable: \(track.file)"
                 if !warnings.contains(warning) { warnings.append(warning) }
                 log(dir, "skipping unreadable track \(track.file)")
+                continue
+            }
+            if audioStatus == .silent {
+                let warning = "\(track.name) track silent: \(track.file)"
+                if !warnings.contains(warning) { warnings.append(warning) }
+                log(dir, "skipping silent track \(track.file)")
                 continue
             }
             log(dir, "transcribing \(track.file) (\(engine.name))")
@@ -323,10 +353,59 @@ actor TranscriptionCoordinator {
         queue.append(normalized)
     }
 
-    private func readableAudio(at url: URL) -> Bool {
-        guard FileManager.default.fileExists(atPath: url.path) else { return false }
-        guard let audio = try? AVAudioFile(forReading: url) else { return false }
-        return audio.length > 0
+    private func finishWaiter(for dir: URL, outcome: Outcome) {
+        waiters.removeValue(forKey: dir.standardizedFileURL.path)?.resume(returning: outcome)
+    }
+
+    private enum AudioStatus {
+        case audible
+        case silent
+    }
+
+    private func audioStatus(at url: URL) -> AudioStatus? {
+        guard FileManager.default.fileExists(atPath: url.path),
+              let audio = try? AVAudioFile(forReading: url),
+              audio.length > 0,
+              let format = AVAudioFormat(
+                commonFormat: .pcmFormatFloat32,
+                sampleRate: audio.processingFormat.sampleRate,
+                channels: 1,
+                interleaved: false
+              ),
+              let converter = AVAudioConverter(from: audio.processingFormat, to: format)
+        else { return nil }
+
+        let chunkFrames = AVAudioFrameCount(4096)
+        var peak: Float = 0
+        var remaining = audio.length
+        while remaining > 0 {
+            let frameCount = min(remaining, AVAudioFramePosition(chunkFrames))
+            guard let source = AVAudioPCMBuffer(
+                pcmFormat: audio.processingFormat,
+                frameCapacity: AVAudioFrameCount(frameCount)
+            ),
+            let mono = AVAudioPCMBuffer(
+                pcmFormat: format,
+                frameCapacity: AVAudioFrameCount(frameCount)
+            )
+            else { return nil }
+
+            do {
+                try audio.read(into: source, frameCount: AVAudioFrameCount(frameCount))
+                try converter.convert(to: mono, from: source)
+            } catch {
+                return nil
+            }
+
+            if let samples = mono.floatChannelData?[0] {
+                for index in 0..<Int(mono.frameLength) {
+                    peak = max(peak, abs(samples[index]))
+                }
+            }
+            if peak >= Self.silentPeakThreshold { return .audible }
+            remaining -= AVAudioFramePosition(frameCount)
+        }
+        return .silent
     }
 
     private func markFailed(_ dir: URL, error: Error) {

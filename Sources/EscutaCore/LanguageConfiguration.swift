@@ -77,7 +77,7 @@ public enum LanguageConfiguration {
             let transcription = object["transcription"] as? [String: Any],
             let rawValue = transcription["language"] as? String
         else {
-            return .automatic
+            return .portuguese
         }
         return LanguagePreference(rawValue: rawValue) ?? .automatic
     }

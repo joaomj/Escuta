@@ -1,9 +1,9 @@
 # quill
 
-A minimal, fully local macOS meeting recorder + transcriber. One menu-bar
-click records your mic and all system audio as two separate tracks; when you
-stop, quill transcribes both on-device and writes a speaker-tagged transcript.
-Nothing ever leaves the machine.
+A minimal, fully local macOS meeting recorder + transcriber. Use the menu bar
+or `quill record` in a terminal to record your mic and all system audio as two
+separate tracks; when you stop, quill transcribes both on-device and writes a
+speaker-tagged transcript. Nothing ever leaves the machine.
 
 ## Development
 
@@ -40,13 +40,16 @@ transcription speed.
 ## How to use
 
 1. **Run it** (`quill` in a terminal, or the LaunchAgent).
-2. **Click the feather in the menu bar → Start recording.** First use prompts
+2. **Click `Escuta` in the menu bar → Start recording.** First use prompts
    for microphone and System Audio Recording permissions. While recording, the
    icon turns red with a running elapsed counter, and macOS shows the purple
    recording indicator.
 3. **Click → Stop recording** when the meeting ends. Transcription starts
-   automatically (the menu shows progress); a notification fires when the
-   transcript is ready.
+    automatically (the menu shows progress); a notification fires when the
+    transcript is ready.
+
+For a terminal-only workflow, run `quill record`. Press `Ctrl-C` to stop; the
+command then waits for transcription and prints the transcript path.
 
 Each session lands in `~/Recordings/<yyyy.MM.dd-HHmm>/`:
 
@@ -69,7 +72,9 @@ written is still readable.
 
 Built in, on-device, automatic. The default engine is **WhisperKit** with the
 multilingual `large-v3-v20240930_626MB` Core ML model. The model and tokenizer
-are stored in `~/Library/Application Support/quill/WhisperKit`. The menu asks
+are stored in `~/Library/Application Support/quill/WhisperKit`. Portuguese
+(`pt`) is the default language hint; choose Automatic or English when needed.
+The menu asks
 before it downloads them and shows the model size, progress, and cache
 destination; `quill doctor` tells you whether they are already cached so you
 are never downloading after an important meeting.
@@ -123,7 +128,9 @@ Optional, at `~/.config/quill/config.json`:
 ```sh
 quill                        # run the menu-bar daemon (^C to quit)
 quill run --out <dir>        # custom recordings root (default ~/Recordings)
+quill record                 # terminal-only recording; Ctrl-C stops and transcribes
 quill doctor                 # check permissions, recordings folder, models
+quill download-model         # download the configured WhisperKit model
 quill install --launch-at-login
 quill install --uninstall
 ```

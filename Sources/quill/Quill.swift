@@ -4,16 +4,156 @@ import EscutaCore
 import Foundation
 
 @main
-struct Quill: ParsableCommand {
+struct Quill: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "quill",
         abstract: "Local meeting recorder + transcriber. Records mic and system audio as two tracks, then transcribes on-device.",
-        subcommands: [Run.self, Doctor.self, Install.self],
+        subcommands: [Run.self, Record.self, Doctor.self, DownloadModel.self, Install.self],
         defaultSubcommand: Run.self
     )
 }
 
-struct Run: ParsableCommand {
+struct Record: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "record",
+        abstract: "Record in the terminal until Ctrl-C, then transcribe."
+    )
+
+    @Option(name: .long, help: "Recordings root directory (overrides the config file).")
+    var out: String?
+
+    mutating func run() async throws {
+        try await runMain()
+    }
+
+    @MainActor
+    private func runMain() async throws {
+        let root = Config.resolveRoot(cliOverride: out)
+        let checks = DoctorReport.run(recordingsRoot: root)
+        if !DoctorReport.recordingRootOK(checks) {
+            DoctorReport.print(checks)
+            throw ExitCode(1)
+        }
+        guard Config.whisperModelIsLocal() else {
+            FileHandle.standardError.write(Data(
+                "Whisper model is not downloaded. Run: quill download-model\n".utf8
+            ))
+            throw ExitCode(1)
+        }
+
+        let session = try RecordingSession(root: root)
+        do {
+            try session.start()
+        } catch {
+            FileHandle.standardError.write(Data("recording start failed: \(error)\n".utf8))
+            throw ExitCode(1)
+        }
+
+        print("recording → \(session.dir.path)")
+        print("press Ctrl-C to stop")
+        let ticker = Task { @MainActor in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled else { return }
+                print("recording · \(Self.format(Date().timeIntervalSince(session.startedAt)) )")
+            }
+        }
+
+        await Self.waitForInterrupt()
+        ticker.cancel()
+
+        do {
+            try session.stop()
+        } catch {
+            FileHandle.standardError.write(Data("recording finalization failed: \(error)\n".utf8))
+            throw ExitCode(1)
+        }
+        print("stopped · \(session.dir.path)")
+
+        let transcription = TranscriptionCoordinator()
+        await transcription.setStatusHandler { status in
+            Self.printStatus(status)
+        }
+        switch await transcription.transcribeAndWait(session.dir) {
+        case .completed(let transcript):
+            print("transcript ready · \(transcript.path)")
+        case .failed(let log):
+            FileHandle.standardError.write(Data("transcription failed · \(log.path)\n".utf8))
+            throw ExitCode(1)
+        case .disabled:
+            print("transcription disabled · \(session.dir.path)")
+        }
+    }
+
+    private static func waitForInterrupt() async {
+        await withCheckedContinuation { continuation in
+            let source = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
+            source.setEventHandler {
+                source.cancel()
+                signal(SIGINT, SIG_DFL)
+                continuation.resume()
+            }
+            signal(SIGINT, SIG_IGN)
+            source.resume()
+        }
+    }
+
+    private static func printStatus(_ status: TranscriptionCoordinator.Status) {
+        switch status {
+        case .idle:
+            break
+        case .waitingForModel(let model, let queued):
+            print("waiting for model \(model) · \(queued) queued")
+        case .downloadingModel(let model, let fraction):
+            print("downloading \(model) · \(Int(fraction * 100))%")
+        case .loadingModel(let model):
+            print("loading \(model)")
+        case .transcribing(let session, let track, let progress, _):
+            let detail = progress.map { " · \($0)" } ?? ""
+            print("transcribing \(session) · \(track)\(detail)")
+        case .ready, .failed:
+            break
+        }
+    }
+
+    private static func format(_ interval: TimeInterval) -> String {
+        let total = Int(interval)
+        let h = total / 3600, m = (total % 3600) / 60, s = total % 60
+        return h > 0
+            ? String(format: "%d:%02d:%02d", h, m, s)
+            : String(format: "%d:%02d", m, s)
+    }
+}
+
+struct DownloadModel: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "download-model",
+        abstract: "Download the configured WhisperKit model and tokenizer."
+    )
+
+    mutating func run() async throws {
+        if Config.whisperModelIsLocal() {
+            print("model already available: \(Config.whisperModelDestination().path)")
+            return
+        }
+
+        print("downloading \(Config.whisperModel()) (\(Config.whisperModelApproximateSize()))")
+        print("destination: \(Config.whisperModelDestination().path)")
+        do {
+            try await WhisperKitEngine.download { fraction in
+                let percent = Int(fraction * 100)
+                FileHandle.standardError.write(Data("\rdownload progress: \(percent)%".utf8))
+            }
+            FileHandle.standardError.write(Data("\n".utf8))
+            print("model download complete")
+        } catch {
+            FileHandle.standardError.write(Data("\nmodel download failed: \(error)\n".utf8))
+            throw ExitCode(1)
+        }
+    }
+}
+
+struct Run: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "run",
         abstract: "Run the menu-bar daemon (default)."
@@ -22,10 +162,8 @@ struct Run: ParsableCommand {
     @Option(name: .long, help: "Recordings root directory (overrides the config file).")
     var out: String?
 
-    func run() throws {
-        // ArgumentParser invokes run() on the main thread; promote that fact
-        // to the type system so AppKit calls are cleanly isolated.
-        try MainActor.assumeIsolated { try runMain() }
+    mutating func run() async throws {
+        try await MainActor.run { try runMain() }
     }
 
     @MainActor
@@ -57,6 +195,7 @@ struct Run: ParsableCommand {
         FileHandle.standardError.write(Data(
             "quill up · recordings → \(root.path) · ^C to quit\n".utf8
         ))
+        notifyUser(title: "Escuta is running", body: "Look for Escuta in the menu bar")
         app.run()
     }
 }

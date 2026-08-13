@@ -128,10 +128,12 @@ final class MenuBarController {
         updateLanguage(language)
 
         if let button = statusItem.button {
-            let image = Self.featherImage()
-            image?.isTemplate = true
-            button.image = image
-            button.imagePosition = .imageLeft
+            // Keep a text label visible. Some macOS configurations accept the
+            // status item but render image-only content with zero width.
+            button.image = nil
+            button.title = "Escuta"
+            button.font = .systemFont(ofSize: NSFont.systemFontSize)
+            button.toolTip = "Escuta meeting recorder"
         }
     }
 
@@ -201,9 +203,13 @@ final class MenuBarController {
     """
 
     private static func featherImage() -> NSImage? {
-        guard let data = featherSVG.data(using: .utf8),
-              let image = NSImage(data: data)
-        else { return nil }
+        if let symbol = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Escuta") {
+            symbol.size = NSSize(width: 16, height: 16)
+            return symbol
+        }
+        guard let data = featherSVG.data(using: .utf8), let image = NSImage(data: data) else {
+            return nil
+        }
         // Menu-bar status icons are nominally 18pt tall; size the SVG to match.
         image.size = NSSize(width: 16, height: 16)
         return image
