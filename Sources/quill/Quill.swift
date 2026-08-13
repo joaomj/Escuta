@@ -135,7 +135,17 @@ final class AppController {
 
     private func stopSession() {
         guard let session else { return }
-        session.stop()
+        do {
+            try session.stop()
+        } catch {
+            FileHandle.standardError.write(Data(
+                "recording finalization failed: \(error)\n".utf8
+            ))
+            notifyUser(
+                title: "quill — recording finalization failed",
+                body: "Audio remains in \(session.dir.path)"
+            )
+        }
         let elapsed = Self.format(Date().timeIntervalSince(session.startedAt))
         FileHandle.standardError.write(Data(
             "○ stopped · \(elapsed) · \(session.dir.path)\n".utf8

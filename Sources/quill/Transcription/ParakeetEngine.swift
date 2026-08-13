@@ -1,4 +1,5 @@
 import AVFoundation
+import EscutaCore
 import FluidAudio
 import Foundation
 
@@ -34,7 +35,7 @@ actor ParakeetEngine: TranscriptionEngine {
         self.manager = manager
     }
 
-    func transcribe(_ audio: URL) async throws -> [TranscriptSegment] {
+    func transcribe(_ audio: URL) async throws -> [RelativeTranscriptSegment] {
         guard let manager else { throw EngineError.notPrepared }
 
         // A track with no frames (recorder died before its first buffer)
@@ -58,7 +59,7 @@ actor ParakeetEngine: TranscriptionEngine {
             let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
             return text.isEmpty
                 ? []
-                : [TranscriptSegment(start: 0, end: result.duration, text: text)]
+                : [RelativeTranscriptSegment(start: 0, end: result.duration, text: text)]
         }
         return Self.segments(from: words)
     }
@@ -71,13 +72,13 @@ actor ParakeetEngine: TranscriptionEngine {
     /// Group word timings into readable segments: break on sentence-ending
     /// punctuation (parakeet v2 emits punctuation), a silence gap, or a hard
     /// length cap so a run-on speaker still wraps.
-    private static func segments(from words: [WordTiming]) -> [TranscriptSegment] {
-        var out: [TranscriptSegment] = []
+    private static func segments(from words: [WordTiming]) -> [RelativeTranscriptSegment] {
+        var out: [RelativeTranscriptSegment] = []
         var current: [WordTiming] = []
 
         func flush() {
             guard let first = current.first, let last = current.last else { return }
-            out.append(TranscriptSegment(
+            out.append(RelativeTranscriptSegment(
                 start: first.startTime,
                 end: last.endTime,
                 text: current.map(\.word).joined(separator: " ")

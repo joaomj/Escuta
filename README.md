@@ -5,6 +5,22 @@ click records your mic and all system audio as two separate tracks; when you
 stop, quill transcribes both on-device and writes a speaker-tagged transcript.
 Nothing ever leaves the machine.
 
+## Development
+
+Use the project Swift command for package work:
+
+```sh
+scripts/swift-package.sh resolve
+scripts/swift-package.sh build
+scripts/swift-package.sh test
+```
+
+The command keeps Swift package cache, configuration, security data, and build
+output under `.build`. It uses only versions in `Package.resolved` and does not
+read credentials from the macOS keychain or netrc files.
+
+Delete `.build` to remove all project-local package and build data.
+
 Named for the feather. Sibling of [parrot](https://github.com/digimata/parrot), same skeleton: single
 Swift binary, menu-bar tray, no app bundle.
 

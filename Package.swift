@@ -9,9 +9,13 @@ let package = Package(
         .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.7.0"),
     ],
     targets: [
+        .target(
+            name: "EscutaCore"
+        ),
         .executableTarget(
             name: "quill",
             dependencies: [
+                "EscutaCore",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "FluidAudio", package: "FluidAudio"),
             ],
@@ -27,6 +31,11 @@ let package = Package(
                     "-Xlinker", "Sources/quill/Info.plist",
                 ]),
             ]
+        ),
+        .executableTarget(
+            name: "EscutaCoreTests",
+            dependencies: ["EscutaCore"],
+            path: "Tests/EscutaCoreTests"
         ),
     ]
 )

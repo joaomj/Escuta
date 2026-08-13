@@ -1,4 +1,6 @@
+import AVFoundation
 import Foundation
+import EscutaCore
 
 /// Post-recording pipeline: a serial queue of session folders to transcribe.
 /// mic.caf → "me", system.caf → "them"; each track's segments are shifted by
@@ -15,6 +17,7 @@ actor TranscriptionCoordinator {
     }
 
     private var queue: [URL] = []
+    private var activeSession: URL?
     private var draining = false
     private var engine: TranscriptionEngine?
     private var lastFailure: String?
@@ -31,35 +34,52 @@ actor TranscriptionCoordinator {
             runHook(for: sessionDir)
             return
         }
-        queue.append(sessionDir)
+        appendIfNeeded(sessionDir)
         drainIfIdle()
     }
 
-    /// Scan the recordings root for sessions that finished (meta.json exists)
-    /// but were never transcribed. Folder names sort chronologically, so
-    /// oldest-first is a name sort.
+    /// Recover recording sessions and scan the filesystem queue.
     func resumePending(root: URL) {
         guard Config.transcriptionEnabled() else { return }
-        guard let entries = try? FileManager.default.contentsOfDirectory(
-            at: root, includingPropertiesForKeys: nil
-        ) else { return }
-
-        let fm = FileManager.default
-        let pending = entries
-            .filter {
-                fm.fileExists(atPath: $0.appendingPathComponent("meta.json").path)
-                    && !fm.fileExists(atPath: $0.appendingPathComponent("transcript.json").path)
+        do {
+            let recovered = try SessionQueue.recoverInterruptedSessions(
+                in: root,
+                now: ISO8601DateFormatter().string(from: Date())
+            )
+            let pending = try SessionQueue.pendingSessions(in: root)
+            for dir in pending {
+                appendIfNeeded(dir)
             }
-            .sorted { $0.lastPathComponent < $1.lastPathComponent }
-        for dir in pending where !queue.contains(dir) {
-            queue.append(dir)
-        }
-        if !pending.isEmpty {
+            if !recovered.isEmpty {
+                FileHandle.standardError.write(Data(
+                    "recovered \(recovered.count) interrupted session(s)\n".utf8
+                ))
+            }
+            if !pending.isEmpty {
+                FileHandle.standardError.write(Data(
+                    "resuming \(pending.count) queued session(s)\n".utf8
+                ))
+            }
+        } catch {
             FileHandle.standardError.write(Data(
-                "resuming \(pending.count) untranscribed session(s)\n".utf8
+                "queue scan failed for \(root.path): \(error)\n".utf8
             ))
         }
         drainIfIdle()
+    }
+
+    func retryFailed(_ sessionDir: URL) {
+        do {
+            var metadata = try SessionMetadata.read(from: sessionDir)
+            guard metadata.state == .failed else { return }
+            metadata.state = .pending
+            metadata.warnings.removeAll()
+            try metadata.write(to: sessionDir)
+            appendIfNeeded(sessionDir)
+            drainIfIdle()
+        } catch {
+            log(sessionDir, "retry request failed: \(error)")
+        }
     }
 
     // MARK: -
@@ -74,12 +94,14 @@ actor TranscriptionCoordinator {
     private func drain() async {
         while !queue.isEmpty {
             let dir = queue.removeFirst()
+            activeSession = dir
             publish(.transcribing(session: dir.lastPathComponent, queued: queue.count))
             do {
                 try await transcribe(dir)
                 notifyUser(title: "quill — transcript ready", body: dir.lastPathComponent)
                 runHook(for: dir)
             } catch {
+                markFailed(dir, error: error)
                 log(dir, "transcription failed: \(error)")
                 lastFailure = dir.lastPathComponent
                 notifyUser(
@@ -88,6 +110,7 @@ actor TranscriptionCoordinator {
                 )
             }
         }
+        activeSession = nil
         await engine?.release()
         engine = nil
         publish(lastFailure.map { .failed(session: $0) } ?? .idle)
@@ -98,45 +121,79 @@ actor TranscriptionCoordinator {
     }
 
     private func transcribe(_ dir: URL) async throws {
-        let meta = try SessionMeta.read(from: dir)
+        var meta = try SessionMetadata.read(from: dir)
+        guard meta.state != .completed else { return }
+        meta.state = .transcribing
+        try meta.write(to: dir)
+
         let engine = try await preparedEngine()
 
-        var merged: [Transcript.Segment] = []
+        var tracks: [TranscriptTrack] = []
+        var warnings = meta.warnings
         for track in meta.tracks {
             let audio = dir.appendingPathComponent(track.file)
-            guard FileManager.default.fileExists(atPath: audio.path) else {
-                log(dir, "skipping missing track \(track.file)")
+            if let checkpoint = try? TrackTranscriptCheckpoint.read(
+                track: track.name,
+                from: dir.appendingPathComponent("checkpoints", isDirectory: true)
+            ), checkpoint.matches(track, engine: engine.name, model: engine.model) {
+                tracks.append(TranscriptTrack(
+                    speaker: checkpoint.speaker,
+                    offsetMs: checkpoint.offsetMs,
+                    segments: checkpoint.segments
+                ))
+                log(dir, "resumed \(track.file) from checkpoint")
+                continue
+            }
+
+            guard readableAudio(at: audio) else {
+                let warning = "\(track.name) track unavailable: \(track.file)"
+                if !warnings.contains(warning) { warnings.append(warning) }
+                log(dir, "skipping unreadable track \(track.file)")
                 continue
             }
             log(dir, "transcribing \(track.file) (\(engine.name))")
-            // One bad track (empty, truncated) shouldn't cost us the other's
-            // transcript — log it and keep going.
-            let segments: [TranscriptSegment]
+            let segments: [RelativeTranscriptSegment]
             do {
                 segments = try await engine.transcribe(audio)
             } catch {
+                let warning = "\(track.name) track transcription failed"
+                if !warnings.contains(warning) { warnings.append(warning) }
                 log(dir, "skipping \(track.file): \(error)")
                 continue
             }
-            let offset = TimeInterval(track.offsetMs) / 1000
-            merged += segments.map {
-                Transcript.Segment(
-                    speaker: track.speaker,
-                    start_ms: Int(($0.start + offset) * 1000),
-                    end_ms: Int(($0.end + offset) * 1000),
-                    text: $0.text
-                )
-            }
+            try TrackTranscriptCheckpoint(
+                track: track.name,
+                file: track.file,
+                speaker: track.speaker,
+                offsetMs: track.offsetMs,
+                engine: engine.name,
+                model: engine.model,
+                createdAt: ISO8601DateFormatter().string(from: Date()),
+                segments: segments
+            ).write(to: dir.appendingPathComponent("checkpoints", isDirectory: true))
+            tracks.append(TranscriptTrack(
+                speaker: track.speaker,
+                offsetMs: track.offsetMs,
+                segments: segments
+            ))
         }
-        merged.sort { $0.start_ms < $1.start_ms }
+        guard !tracks.isEmpty else {
+            throw TranscriptionError.noReadableTracks
+        }
+        let merged = TranscriptMerger.merge(tracks)
 
-        let transcript = Transcript(
+        let transcript = TranscriptDocument(
             engine: engine.name,
             model: engine.model,
-            created_at: ISO8601DateFormatter().string(from: Date()),
-            segments: merged
+            createdAt: ISO8601DateFormatter().string(from: Date()),
+            segments: merged,
+            warnings: warnings
         )
         try transcript.write(to: dir)
+        meta.state = .completed
+        meta.ended = meta.ended ?? ISO8601DateFormatter().string(from: Date())
+        meta.warnings = warnings
+        try meta.write(to: dir)
         log(dir, "done — \(merged.count) segments")
     }
 
@@ -152,6 +209,38 @@ actor TranscriptionCoordinator {
         try await engine.prepare()
         self.engine = engine
         return engine
+    }
+
+    private func appendIfNeeded(_ sessionDir: URL) {
+        let normalized = sessionDir.standardizedFileURL
+        guard normalized != activeSession?.standardizedFileURL,
+              !queue.contains(where: { $0.standardizedFileURL == normalized })
+        else { return }
+        queue.append(normalized)
+    }
+
+    private func readableAudio(at url: URL) -> Bool {
+        guard FileManager.default.fileExists(atPath: url.path) else { return false }
+        guard let audio = try? AVAudioFile(forReading: url) else { return false }
+        return audio.length > 0
+    }
+
+    private func markFailed(_ dir: URL, error: Error) {
+        guard var metadata = try? SessionMetadata.read(from: dir) else { return }
+        metadata.state = .failed
+        let warning = "transcription failed: \(error)"
+        if !metadata.warnings.contains(warning) { metadata.warnings.append(warning) }
+        try? metadata.write(to: dir)
+    }
+
+    private enum TranscriptionError: Error, CustomStringConvertible {
+        case noReadableTracks
+
+        var description: String {
+            switch self {
+            case .noReadableTracks: return "no readable audio tracks"
+            }
+        }
     }
 
     /// Fires the configured on_stop shell command with the session directory
@@ -183,93 +272,5 @@ actor TranscriptionCoordinator {
 
     private func publish(_ status: Status) {
         statusHandler?(status)
-    }
-}
-
-/// The slice of meta.json the coordinator needs: which files exist, who they
-/// represent, and how far each track started after the earliest one.
-private struct SessionMeta {
-    struct Track {
-        let file: String
-        let speaker: String
-        let offsetMs: Int
-    }
-
-    let tracks: [Track]
-
-    enum MetaError: Error, CustomStringConvertible {
-        case unreadable(URL)
-
-        var description: String {
-            switch self {
-            case .unreadable(let url): return "can't parse \(url.path)"
-            }
-        }
-    }
-
-    static func read(from dir: URL) throws -> SessionMeta {
-        let url = dir.appendingPathComponent("meta.json")
-        guard
-            let data = try? Data(contentsOf: url),
-            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let files = json["files"] as? [String: String]
-        else { throw MetaError.unreadable(url) }
-
-        // Sessions recorded before offsets were captured default to 0 —
-        // tracks start within tens of milliseconds of each other anyway.
-        let offsets = json["start_offset_ms"] as? [String: Int] ?? [:]
-        var tracks: [Track] = []
-        if let mic = files["mic"] {
-            tracks.append(Track(file: mic, speaker: "me", offsetMs: offsets["mic"] ?? 0))
-        }
-        if let system = files["system"] {
-            tracks.append(Track(file: system, speaker: "them", offsetMs: offsets["system"] ?? 0))
-        }
-        return SessionMeta(tracks: tracks)
-    }
-}
-
-/// Canonical transcript. Property names are the JSON schema — this struct
-/// exists to be serialized.
-private struct Transcript: Codable {
-    struct Segment: Codable {
-        let speaker: String
-        let start_ms: Int
-        let end_ms: Int
-        let text: String
-    }
-
-    let engine: String
-    let model: String
-    let created_at: String
-    let segments: [Segment]
-
-    /// Write transcript.json and render transcript.md. Both writes are atomic
-    /// (temp file + rename), so a partially written transcript never exists on
-    /// disk — resumePending treats presence of transcript.json as "done".
-    func write(to dir: URL) throws {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(self)
-            .write(to: dir.appendingPathComponent("transcript.json"), options: .atomic)
-        try Data(rendered(title: dir.lastPathComponent).utf8)
-            .write(to: dir.appendingPathComponent("transcript.md"), options: .atomic)
-    }
-
-    private func rendered(title: String) -> String {
-        var lines = ["# \(title)", "", "engine: \(engine) (\(model))", ""]
-        for seg in segments {
-            lines.append("**[\(Self.clock(seg.start_ms))] \(seg.speaker):** \(seg.text)")
-            lines.append("")
-        }
-        return lines.joined(separator: "\n")
-    }
-
-    private static func clock(_ ms: Int) -> String {
-        let total = ms / 1000
-        let h = total / 3600, m = (total % 3600) / 60, s = total % 60
-        return h > 0
-            ? String(format: "%d:%02d:%02d", h, m, s)
-            : String(format: "%d:%02d", m, s)
     }
 }
