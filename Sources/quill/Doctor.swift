@@ -7,6 +7,12 @@ enum CheckStatus {
     case fail(String)
 }
 
+enum MicrophonePermission {
+    case allowed
+    case notRequested
+    case denied
+}
+
 struct Check {
     let name: String
     let status: CheckStatus
@@ -24,24 +30,34 @@ enum DoctorReport {
     }
 
     static func checkMicrophone() -> Check {
-        let status = AVCaptureDevice.authorizationStatus(for: .audio)
-        switch status {
-        case .authorized:
+        switch microphonePermission() {
+        case .allowed:
             return Check(name: "microphone", status: .ok, remediation: nil)
-        case .notDetermined:
+        case .notRequested:
             return Check(
                 name: "microphone",
                 status: .warn("not yet requested — will prompt on first recording"),
                 remediation: "start a recording once; macOS will prompt"
             )
-        case .denied, .restricted:
+        case .denied:
             return Check(
                 name: "microphone",
                 status: .fail("denied"),
                 remediation: "System Settings → Privacy & Security → Microphone → enable for quill (or your terminal)"
             )
+        }
+    }
+
+    static func microphonePermission() -> MicrophonePermission {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            return .allowed
+        case .notDetermined:
+            return .notRequested
+        case .denied, .restricted:
+            return .denied
         @unknown default:
-            return Check(name: "microphone", status: .fail("unknown state"), remediation: nil)
+            return .denied
         }
     }
 
@@ -86,8 +102,7 @@ enum DoctorReport {
             )
         }
         let model = Config.whisperModel()
-        if modelFilesExist(at: Config.whisperModelFolder(model: model)),
-           tokenizerFilesExist(at: Config.whisperTokenizerFolder()) {
+        if Config.whisperModelIsLocal() {
             return Check(name: "transcription", status: .ok, remediation: nil)
         }
         return Check(
@@ -95,21 +110,6 @@ enum DoctorReport {
             status: .warn("WhisperKit model \(model) is not downloaded"),
             remediation: "download the model from the setup menu before transcription"
         )
-    }
-
-    private static func modelFilesExist(at directory: URL) -> Bool {
-        guard let files = try? FileManager.default.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        ) else { return false }
-        return ["MelSpectrogram", "AudioEncoder", "TextDecoder"].allSatisfy { name in
-            files.contains { $0.lastPathComponent.hasPrefix(name) }
-        }
-    }
-
-    private static func tokenizerFilesExist(at directory: URL) -> Bool {
-        FileManager.default.fileExists(atPath: directory.appendingPathComponent("tokenizer.json").path)
     }
 
     static func print(_ checks: [Check]) {
@@ -132,6 +132,16 @@ enum DoctorReport {
     static func allOK(_ checks: [Check]) -> Bool {
         checks.allSatisfy {
             if case .fail = $0.status { return false }
+            return true
+        }
+    }
+
+    /// The menu must remain available when permissions need correction. Only a
+    /// recordings-folder failure prevents the daemon from starting.
+    static func recordingRootOK(_ checks: [Check]) -> Bool {
+        checks.allSatisfy { check in
+            guard check.name == "recordings folder" else { return true }
+            if case .fail = check.status { return false }
             return true
         }
     }

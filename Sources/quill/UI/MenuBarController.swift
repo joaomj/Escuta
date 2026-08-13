@@ -8,15 +8,24 @@ import EscutaCore
 final class MenuBarController {
     private let statusItem: NSStatusItem
     private let stateLabel: NSMenuItem
+    private let setupLabel: NSMenuItem
     private let transcriptionLabel: NSMenuItem
     private let toggleItem: NSMenuItem
     private let languageItem: NSMenuItem
+    private let downloadModelItem: NSMenuItem
+    private let openLatestItem: NSMenuItem
+    private let retryItem: NSMenuItem
+    private let microphoneSettingsItem: NSMenuItem
     private var languageMenuItems: [LanguagePreference: NSMenuItem] = [:]
 
     var onToggle: (() -> Void)?
     var onOpenFolder: (() -> Void)?
     var onQuit: (() -> Void)?
     var onLanguagePreference: ((LanguagePreference) -> Void)?
+    var onDownloadModel: (() -> Void)?
+    var onOpenLatestTranscript: (() -> Void)?
+    var onRetryFailed: (() -> Void)?
+    var onOpenMicrophoneSettings: (() -> Void)?
 
     init(language: LanguagePreference) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -27,6 +36,18 @@ final class MenuBarController {
         stateLabel = NSMenuItem(title: "idle", action: nil, keyEquivalent: "")
         stateLabel.isEnabled = false
         menu.addItem(stateLabel)
+
+        setupLabel = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        setupLabel.isEnabled = false
+        menu.addItem(setupLabel)
+
+        microphoneSettingsItem = NSMenuItem(
+            title: "Open microphone settings",
+            action: #selector(microphoneSettingsClicked),
+            keyEquivalent: ""
+        )
+        microphoneSettingsItem.isEnabled = false
+        menu.addItem(microphoneSettingsItem)
 
         transcriptionLabel = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         transcriptionLabel.isEnabled = false
@@ -48,6 +69,29 @@ final class MenuBarController {
             keyEquivalent: "o"
         )
         menu.addItem(openFolder)
+
+        downloadModelItem = NSMenuItem(
+            title: "Download model...",
+            action: #selector(downloadModelClicked),
+            keyEquivalent: ""
+        )
+        menu.addItem(downloadModelItem)
+
+        openLatestItem = NSMenuItem(
+            title: "Open latest transcript",
+            action: #selector(openLatestClicked),
+            keyEquivalent: ""
+        )
+        openLatestItem.isEnabled = false
+        menu.addItem(openLatestItem)
+
+        retryItem = NSMenuItem(
+            title: "Retry failed transcription",
+            action: #selector(retryClicked),
+            keyEquivalent: ""
+        )
+        retryItem.isEnabled = false
+        menu.addItem(retryItem)
 
         menu.addItem(.separator())
 
@@ -76,7 +120,7 @@ final class MenuBarController {
         )
         menu.addItem(quit)
 
-        for item in [toggleItem, openFolder, quit] {
+        for item in [toggleItem, openFolder, microphoneSettingsItem, downloadModelItem, openLatestItem, retryItem, quit] {
             item.target = self
         }
 
@@ -99,6 +143,33 @@ final class MenuBarController {
         stateLabel.title = recording ? "● recording · \(elapsed ?? "0:00")" : "idle"
         toggleItem.title = recording ? "Stop recording" : "Start recording"
         statusItem.button?.contentTintColor = recording ? .systemRed : nil
+    }
+
+    func updateSetup(_ text: String) {
+        setupLabel.title = text
+    }
+
+    func updateMicrophonePermission(_ permission: MicrophonePermission) {
+        microphoneSettingsItem.isEnabled = permission == .denied
+    }
+
+    func updateModel(local: Bool, model: String, size: String, destination: String) {
+        if local {
+            downloadModelItem.title = "Model ready: \(model)"
+            downloadModelItem.isEnabled = false
+        } else {
+            downloadModelItem.title = "Download \(model) (\(size))..."
+            downloadModelItem.isEnabled = true
+        }
+        setupLabel.toolTip = "Model destination: \(destination)"
+    }
+
+    func updateLatestTranscript(available: Bool) {
+        openLatestItem.isEnabled = available
+    }
+
+    func updateRetry(available: Bool) {
+        retryItem.isEnabled = available
     }
 
     /// Show transcription progress/failure as a second status line in the
@@ -140,6 +211,10 @@ final class MenuBarController {
 
     @objc private func toggleClicked() { onToggle?() }
     @objc private func openFolderClicked() { onOpenFolder?() }
+    @objc private func downloadModelClicked() { onDownloadModel?() }
+    @objc private func openLatestClicked() { onOpenLatestTranscript?() }
+    @objc private func retryClicked() { onRetryFailed?() }
+    @objc private func microphoneSettingsClicked() { onOpenMicrophoneSettings?() }
     @objc private func quitClicked() { onQuit?() }
     @objc private func languageClicked(_ sender: NSMenuItem) {
         guard

@@ -35,7 +35,7 @@ struct Run: ParsableCommand {
         // Non-blocking: permissions prompt on first recording, so warnings at
         // startup are informational, not fatal.
         let checks = DoctorReport.run(recordingsRoot: root)
-        if !DoctorReport.allOK(checks) {
+        if !DoctorReport.recordingRootOK(checks) {
             FileHandle.standardError.write(Data("startup checks failed:\n".utf8))
             DoctorReport.print(checks)
             throw ExitCode(1)
@@ -84,6 +84,8 @@ final class AppController {
     private let transcription = TranscriptionCoordinator()
     private var session: RecordingSession?
     private var ticker: Timer?
+    private var latestTranscript: URL?
+    private var failedSession: URL?
 
     init(root: URL) {
         self.root = root
@@ -93,7 +95,24 @@ final class AppController {
         menuBar.onLanguagePreference = { [weak self] preference in
             self?.setLanguagePreference(preference)
         }
+        menuBar.onDownloadModel = { [weak self] in self?.confirmModelDownload() }
+        menuBar.onOpenLatestTranscript = { [weak self] in self?.openLatestTranscript() }
+        menuBar.onRetryFailed = { [weak self] in self?.retryFailed() }
+        menuBar.onOpenMicrophoneSettings = { Self.openMicrophoneSettings() }
         menuBar.update(recording: false, elapsed: nil)
+        menuBar.updateModel(
+            local: Config.whisperModelIsLocal(),
+            model: Config.whisperModel(),
+            size: Config.whisperModelApproximateSize(),
+            destination: Config.whisperModelDestination().path
+        )
+        menuBar.updateSetup(Self.setupText())
+        menuBar.updateMicrophonePermission(DoctorReport.microphonePermission())
+        let latest = Self.latestSessionState(in: root)
+        latestTranscript = latest.transcript
+        failedSession = latest.failed
+        menuBar.updateLatestTranscript(available: latest.transcript != nil)
+        menuBar.updateRetry(available: latest.failed != nil)
 
         Task { [transcription, root] in
             await transcription.setStatusHandler { status in
@@ -167,12 +186,39 @@ final class AppController {
         switch status {
         case .idle:
             menuBar.updateTranscription(nil)
-        case .transcribing(let name, let queued):
-            menuBar.updateTranscription(
-                queued > 0 ? "transcribing \(name) · \(queued) queued" : "transcribing \(name)"
+            menuBar.updateRetry(available: failedSession != nil)
+            menuBar.updateModel(
+                local: Config.whisperModelIsLocal(),
+                model: Config.whisperModel(),
+                size: Config.whisperModelApproximateSize(),
+                destination: Config.whisperModelDestination().path
             )
-        case .failed(let name):
-            menuBar.updateTranscription("transcription failed · \(name)")
+        case .waitingForModel(let model, let queued):
+            menuBar.updateTranscription(
+                "model \(model) not downloaded · \(queued) queued"
+            )
+        case .downloadingModel(let model, let fraction):
+            menuBar.updateTranscription(
+                "downloading \(model) · \(Int(fraction * 100))%"
+            )
+        case .loadingModel(let model):
+            menuBar.updateTranscription("loading \(model)")
+        case .transcribing(let name, let track, let progress, let queued):
+            let queueText = queued > 0 ? " · \(queued) queued" : ""
+            let progressText = progress.map { " · \($0)" } ?? ""
+            menuBar.updateTranscription(
+                "transcribing \(name) · \(track)\(progressText)\(queueText)"
+            )
+        case .ready(let name, let transcript):
+            latestTranscript = transcript
+            failedSession = nil
+            menuBar.updateTranscription("transcript ready · \(name)")
+            menuBar.updateLatestTranscript(available: true)
+            menuBar.updateRetry(available: false)
+        case .failed(let name, _, let directory):
+            failedSession = directory
+            menuBar.updateTranscription("transcription failed · \(name) · see log")
+            menuBar.updateRetry(available: true)
         }
     }
 
@@ -196,6 +242,73 @@ final class AppController {
         } catch {
             notifyUser(title: "quill — language was not saved", body: "\(error)")
         }
+    }
+
+    private func confirmModelDownload() {
+        guard !Config.whisperModelIsLocal() else { return }
+        let alert = NSAlert()
+        alert.messageText = "Download the Whisper model?"
+        alert.informativeText = "\(Config.whisperModel()) (\(Config.whisperModelApproximateSize())) will be saved to \(Config.whisperModelDestination().path). The download needs an internet connection."
+        alert.addButton(withTitle: "Download")
+        alert.addButton(withTitle: "Not now")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        Task { [transcription] in await transcription.downloadModel() }
+    }
+
+    private func openLatestTranscript() {
+        guard let latestTranscript else { return }
+        NSWorkspace.shared.open(latestTranscript)
+    }
+
+    private func retryFailed() {
+        guard let failedSession else { return }
+        Task { [transcription] in await transcription.retryFailed(failedSession) }
+    }
+
+    private static func setupText() -> String {
+        let microphone: String
+        switch DoctorReport.microphonePermission() {
+        case .allowed:
+            microphone = "microphone allowed"
+        case .notRequested:
+            microphone = "microphone not requested"
+        case .denied:
+            microphone = "microphone denied · enable in System Settings"
+        }
+        return "\(microphone) · system audio asks on first recording"
+    }
+
+    private static func openMicrophoneSettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") else {
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+
+    private static func latestSessionState(in root: URL) -> (transcript: URL?, failed: URL?) {
+        guard let directories = try? FileManager.default.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return (nil, nil) }
+
+        let sessions = directories.filter {
+            (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+        }.sorted { $0.lastPathComponent > $1.lastPathComponent }
+
+        var transcript: URL?
+        var failed: URL?
+        for directory in sessions {
+            guard let metadata = try? SessionMetadata.read(from: directory) else { continue }
+            if metadata.state == .completed, transcript == nil {
+                transcript = directory.appendingPathComponent("transcript.md")
+            }
+            if metadata.state == .failed, failed == nil {
+                failed = directory
+            }
+            if transcript != nil, failed != nil { break }
+        }
+        return (transcript, failed)
     }
 
     private static func format(_ interval: TimeInterval) -> String {

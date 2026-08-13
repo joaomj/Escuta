@@ -69,9 +69,10 @@ written is still readable.
 
 Built in, on-device, automatic. The default engine is **WhisperKit** with the
 multilingual `large-v3-v20240930_626MB` Core ML model. The model and tokenizer
-are stored in `~/Library/Application Support/quill/WhisperKit`. The setup flow
-downloads them before transcription; `quill doctor` tells you whether they are
-already cached so you are never downloading after an important meeting.
+are stored in `~/Library/Application Support/quill/WhisperKit`. The menu asks
+before it downloads them and shows the model size, progress, and cache
+destination; `quill doctor` tells you whether they are already cached so you
+are never downloading after an important meeting.
 
 Each track is transcribed separately, shifted by its start offset so both
 share one clock, and merged by timestamp. Jobs run in a serial queue — you can

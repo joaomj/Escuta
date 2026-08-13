@@ -58,9 +58,43 @@ actor WhisperKitEngine: TranscriptionEngine {
         whisperKit = kit
     }
 
+    /// Download model and tokenizer files only after an explicit user action.
+    /// WhisperKit stores downloads in a Hub cache, so completed files are moved
+    /// into Escuta's stable, documented cache paths after each download.
+    static func download(
+        progress: @escaping @Sendable (Double) -> Void
+    ) async throws {
+        let staging = Config.whisperDownloadStagingFolder()
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+
+        let downloadedModel = try await WhisperKit.download(
+            variant: Config.whisperModel(),
+            downloadBase: staging,
+            progressCallback: { update in
+                progress(min(update.fractionCompleted * 0.9, 0.9))
+            }
+        )
+        try installModel(from: downloadedModel, to: Config.whisperModelFolder())
+
+        let hub = HubApiWrapper(downloadBase: staging)
+        let tokenizerRepo = HubApiWrapper.Repo(id: Config.whisperTokenizerRepository())
+        _ = try await hub.snapshot(
+            from: tokenizerRepo,
+            matching: ["tokenizer.json", "tokenizer_config.json"]
+        ) { update in
+            progress(0.9 + update.fractionCompleted * 0.1)
+        }
+        try installTokenizer(
+            from: hub.localRepoLocation(tokenizerRepo),
+            to: Config.whisperTokenizerFolder()
+        )
+        progress(1)
+    }
+
     func transcribe(
         _ audio: URL,
-        language: LanguagePreference
+        language: LanguagePreference,
+        progress: @escaping @Sendable (String) -> Void
     ) async throws -> EngineTranscript {
         guard let whisperKit else { throw EngineError.notPrepared }
         try validateAudio(audio)
@@ -76,10 +110,12 @@ actor WhisperKitEngine: TranscriptionEngine {
             audioPath: audio.path,
             audioInputOptions: input,
             decodeOptions: options,
-            callback: { progress in
+            callback: { update in
                 FileHandle.standardError.write(Data(
-                    "whisperkit progress window \(progress.windowId)\n".utf8
+                    "whisperkit progress window \(update.windowId)\n".utf8
                 ))
+                let text = update.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                progress(text.isEmpty ? "window \(update.windowId)" : text)
                 return true
             }
         )
@@ -118,6 +154,38 @@ actor WhisperKitEngine: TranscriptionEngine {
             throw error
         } catch {
             throw EngineError.unreadableAudio(audio, error)
+        }
+    }
+
+    private static func installModel(from source: URL, to destination: URL) throws {
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(
+            at: destination.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        if fileManager.fileExists(atPath: destination.path) {
+            try fileManager.removeItem(at: destination)
+        }
+        try fileManager.moveItem(at: source, to: destination)
+    }
+
+    private static func installTokenizer(from source: URL, to destination: URL) throws {
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
+        let files = try fileManager.contentsOfDirectory(
+            at: source,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        )
+        for file in files {
+            guard (try? file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else {
+                continue
+            }
+            let target = destination.appendingPathComponent(file.lastPathComponent)
+            if fileManager.fileExists(atPath: target.path) {
+                try fileManager.removeItem(at: target)
+            }
+            try fileManager.copyItem(at: file, to: target)
         }
     }
 }

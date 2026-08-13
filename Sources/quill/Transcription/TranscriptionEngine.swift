@@ -16,7 +16,8 @@ protocol TranscriptionEngine: Sendable {
     func prepare() async throws
     func transcribe(
         _ audio: URL,
-        language: LanguagePreference
+        language: LanguagePreference,
+        progress: @escaping @Sendable (String) -> Void
     ) async throws -> EngineTranscript
     func release() async
 }

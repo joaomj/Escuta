@@ -83,9 +83,45 @@ enum Config {
         modelRoot().appendingPathComponent("tokenizer", isDirectory: true)
     }
 
+    static func whisperModelApproximateSize() -> String {
+        whisperModel() == developmentWhisperModel ? "about 75 MB" : "about 626 MB"
+    }
+
+    static func whisperModelDestination() -> URL {
+        whisperModelFolder()
+    }
+
+    static func whisperModelIsLocal() -> Bool {
+        modelFilesExist(at: whisperModelFolder())
+            && FileManager.default.fileExists(
+                atPath: whisperTokenizerFolder().appendingPathComponent("tokenizer.json").path
+            )
+    }
+
+    static func whisperTokenizerRepository() -> String {
+        whisperModel() == developmentWhisperModel
+            ? "openai/whisper-tiny"
+            : "openai/whisper-large-v3"
+    }
+
+    static func whisperDownloadStagingFolder() -> URL {
+        modelRoot().appendingPathComponent(".download", isDirectory: true)
+    }
+
     private static func modelRoot() -> URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/quill/WhisperKit", isDirectory: true)
+    }
+
+    private static func modelFilesExist(at directory: URL) -> Bool {
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else { return false }
+        return ["MelSpectrogram", "AudioEncoder", "TextDecoder"].allSatisfy { name in
+            files.contains { $0.lastPathComponent.hasPrefix(name) }
+        }
     }
 
     private static func transcription() -> [String: Any]? {

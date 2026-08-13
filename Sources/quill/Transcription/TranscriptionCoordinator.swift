@@ -12,8 +12,12 @@ import EscutaCore
 actor TranscriptionCoordinator {
     enum Status: Sendable {
         case idle
-        case transcribing(session: String, queued: Int)
-        case failed(session: String)
+        case waitingForModel(model: String, queued: Int)
+        case downloadingModel(model: String, fraction: Double)
+        case loadingModel(model: String)
+        case transcribing(session: String, track: String, progress: String?, queued: Int)
+        case ready(session: String, transcript: URL)
+        case failed(session: String, log: URL, directory: URL)
     }
 
     private var queue: [URL] = []
@@ -21,7 +25,9 @@ actor TranscriptionCoordinator {
     private var draining = false
     private var engine: TranscriptionEngine?
     private var lastFailure: String?
+    private var lastFailureDirectory: URL?
     private var statusHandler: (@Sendable (Status) -> Void)?
+    private var downloading = false
 
     func setStatusHandler(_ handler: @escaping @Sendable (Status) -> Void) {
         statusHandler = handler
@@ -36,6 +42,29 @@ actor TranscriptionCoordinator {
         }
         appendIfNeeded(sessionDir)
         drainIfIdle()
+    }
+
+    /// Start the explicitly approved model download. Pending sessions remain
+    /// untouched if the download fails.
+    func downloadModel() async {
+        guard !Config.whisperModelIsLocal(), !downloading else { return }
+        downloading = true
+        publish(.downloadingModel(model: Config.whisperModel(), fraction: 0))
+        do {
+            try await WhisperKitEngine.download { [weak self] fraction in
+                Task { await self?.publish(.downloadingModel(
+                    model: Config.whisperModel(),
+                    fraction: fraction
+                )) }
+            }
+            publish(.idle)
+            downloading = false
+            drainIfIdle()
+        } catch {
+            downloading = false
+            FileHandle.standardError.write(Data("model download failed: \(error)\n".utf8))
+            publish(.waitingForModel(model: Config.whisperModel(), queued: queue.count))
+        }
     }
 
     /// Recover recording sessions and scan the filesystem queue.
@@ -88,32 +117,62 @@ actor TranscriptionCoordinator {
         guard !draining, !queue.isEmpty else { return }
         draining = true
         lastFailure = nil
+        lastFailureDirectory = nil
         Task { await drain() }
     }
 
     private func drain() async {
+        guard Config.whisperModelIsLocal() else {
+            publish(.waitingForModel(model: Config.whisperModel(), queued: queue.count))
+            draining = false
+            return
+        }
+
         while !queue.isEmpty {
             let dir = queue.removeFirst()
             activeSession = dir
-            publish(.transcribing(session: dir.lastPathComponent, queued: queue.count))
+            publish(.transcribing(
+                session: dir.lastPathComponent,
+                track: "starting",
+                progress: nil,
+                queued: queue.count
+            ))
             do {
                 try await transcribe(dir)
+                publish(.ready(
+                    session: dir.lastPathComponent,
+                    transcript: dir.appendingPathComponent("transcript.md")
+                ))
                 notifyUser(title: "quill — transcript ready", body: dir.lastPathComponent)
                 runHook(for: dir)
             } catch {
                 markFailed(dir, error: error)
                 log(dir, "transcription failed: \(error)")
                 lastFailure = dir.lastPathComponent
+                lastFailureDirectory = dir
+                publish(.failed(
+                    session: dir.lastPathComponent,
+                    log: dir.appendingPathComponent("transcribe.log"),
+                    directory: dir
+                ))
                 notifyUser(
                     title: "quill — transcription failed",
-                    body: "\(dir.lastPathComponent) — see transcribe.log"
+                    body: "\(dir.lastPathComponent) — \(dir.appendingPathComponent("transcribe.log").path)"
                 )
             }
         }
         activeSession = nil
         await engine?.release()
         engine = nil
-        publish(lastFailure.map { .failed(session: $0) } ?? .idle)
+        if let lastFailure, let directory = lastFailureDirectory {
+            publish(.failed(
+                session: lastFailure,
+                log: directory.appendingPathComponent("transcribe.log"),
+                directory: directory
+            ))
+        } else {
+            publish(.idle)
+        }
         draining = false
         // An enqueue that landed between the loop exiting and the release
         // finishing would otherwise sit until the next enqueue.
@@ -168,7 +227,25 @@ actor TranscriptionCoordinator {
             log(dir, "transcribing \(track.file) (\(engine.name))")
             let result: EngineTranscript
             do {
-                result = try await engine.transcribe(audio, language: requestedLanguage)
+                publish(.transcribing(
+                    session: dir.lastPathComponent,
+                    track: track.name,
+                    progress: nil,
+                    queued: queue.count
+                ))
+                let queued = queue.count
+                result = try await engine.transcribe(
+                    audio,
+                    language: requestedLanguage,
+                    progress: { [weak self] detail in
+                        Task { await self?.publish(.transcribing(
+                            session: dir.lastPathComponent,
+                            track: track.name,
+                            progress: detail,
+                            queued: queued
+                        )) }
+                    }
+                )
             } catch {
                 let warning = "\(track.name) track transcription failed"
                 if !warnings.contains(warning) { warnings.append(warning) }
@@ -231,6 +308,7 @@ actor TranscriptionCoordinator {
                 "warning: unknown transcription engine \"\(configured)\" — using whisperkit\n".utf8
             ))
         }
+        publish(.loadingModel(model: Config.whisperModel()))
         let engine = WhisperKitEngine()
         try await engine.prepare()
         self.engine = engine
