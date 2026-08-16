@@ -1,9 +1,25 @@
 # quill
 
-A minimal, fully local macOS meeting recorder + transcriber. One menu-bar
-click records your mic and all system audio as two separate tracks; when you
-stop, quill transcribes both on-device and writes a speaker-tagged transcript.
-Nothing ever leaves the machine.
+A minimal, fully local macOS meeting recorder + transcriber. Use the menu bar
+or `quill record` in a terminal to record your mic and all system audio as two
+separate tracks; when you stop, quill transcribes both on-device and writes a
+speaker-tagged transcript. Nothing ever leaves the machine.
+
+## Development
+
+Use the project Swift command for package work:
+
+```sh
+scripts/swift-package.sh resolve
+scripts/swift-package.sh build
+scripts/swift-package.sh test
+```
+
+The command keeps Swift package cache, configuration, security data, and build
+output under `.build`. It uses only versions in `Package.resolved` and does not
+read credentials from the macOS keychain or netrc files.
+
+Delete `.build` to remove all project-local package and build data.
 
 Named for the feather. Sibling of [parrot](https://github.com/digimata/parrot), same skeleton: single
 Swift binary, menu-bar tray, no app bundle.
@@ -24,13 +40,16 @@ transcription speed.
 ## How to use
 
 1. **Run it** (`quill` in a terminal, or the LaunchAgent).
-2. **Click the feather in the menu bar → Start recording.** First use prompts
+2. **Click `Escuta` in the menu bar → Start recording.** First use prompts
    for microphone and System Audio Recording permissions. While recording, the
    icon turns red with a running elapsed counter, and macOS shows the purple
    recording indicator.
 3. **Click → Stop recording** when the meeting ends. Transcription starts
-   automatically (the menu shows progress); a notification fires when the
-   transcript is ready.
+    automatically (the menu shows progress); a notification fires when the
+    transcript is ready.
+
+For a terminal-only workflow, run `quill record`. Press `Ctrl-C` to stop; the
+command then waits for transcription and prints the transcript path.
 
 Each session lands in `~/Recordings/<yyyy.MM.dd-HHmm>/`:
 
@@ -51,12 +70,14 @@ written is still readable.
 
 ## Transcription
 
-Built in, on-device, automatic. The default engine is **Parakeet TDT 0.6B v2**
-(English) via [FluidAudio](https://github.com/FluidInference/FluidAudio)'s
-Core ML port — roughly 20 seconds per hour of audio on Apple Silicon. Models
-(~600 MB) download once on first transcription; `quill doctor` tells you
-whether they're already cached so you're never downloading after an important
-meeting.
+Built in, on-device, automatic. The default engine is **WhisperKit** with the
+multilingual `large-v3-v20240930_626MB` Core ML model. The model and tokenizer
+are stored in `~/Library/Application Support/quill/WhisperKit`. Portuguese
+(`pt`) is the default language hint; choose Automatic or English when needed.
+The menu asks
+before it downloads them and shows the model size, progress, and cache
+destination; `quill doctor` tells you whether they are already cached so you
+are never downloading after an important meeting.
 
 Each track is transcribed separately, shifted by its start offset so both
 share one clock, and merged by timestamp. Jobs run in a serial queue — you can
@@ -65,8 +86,9 @@ on next launch (the filesystem is the queue: a session with `meta.json` but no
 `transcript.json` is pending). Failures append to the session's
 `transcribe.log` and never block later jobs.
 
-The engine sits behind a small protocol; a Whisper engine (WhisperKit
-large-v3-turbo) is planned as the fallback / re-transcription option.
+The engine sits behind a small protocol. Set the model to `tiny` in the
+transcription config for development checks; production defaults to
+`large-v3-v20240930_626MB`.
 
 ## Config
 
@@ -75,7 +97,12 @@ Optional, at `~/.config/quill/config.json`:
 ```json
 {
   "recordings_dir": "~/Recordings",
-  "transcription": { "enabled": true, "engine": "parakeet" },
+  "transcription": {
+    "enabled": true,
+    "engine": "whisperkit",
+    "model": "large-v3-v20240930_626MB",
+    "language": "automatic"
+  },
   "on_stop": "my-hook"
 }
 ```
@@ -83,6 +110,8 @@ Optional, at `~/.config/quill/config.json`:
 - `recordings_dir` — where sessions land. Resolution order: `--out` flag >
   config > `~/Recordings`.
 - `transcription.enabled` — set `false` to just record.
+- `transcription.language` — `automatic` by default, or `pt` for Portuguese
+  (Brazil) and `en` for English. The same setting is available in the menu.
 - `mic_voice_processing` — Apple's echo cancellation on the mic (default off).
   Set `true` when recording meetings through the speakers, so playback doesn't
   bleed into the mic track and get transcribed twice as "me". The trade: while
@@ -99,7 +128,9 @@ Optional, at `~/.config/quill/config.json`:
 ```sh
 quill                        # run the menu-bar daemon (^C to quit)
 quill run --out <dir>        # custom recordings root (default ~/Recordings)
+quill record                 # terminal-only recording; Ctrl-C stops and transcribes
 quill doctor                 # check permissions, recordings folder, models
+quill download-model         # download the configured WhisperKit model
 quill install --launch-at-login
 quill install --uninstall
 ```
@@ -111,7 +142,7 @@ quill install --uninstall
   system audio capture via a private aggregate device
 - **AVAudioEngine** — mic capture
 - **AVAudioFile** — streaming AAC encode into CAF
-- **FluidAudio / Parakeet** — on-device Core ML transcription
+- **WhisperKit** — multilingual on-device Core ML transcription
 - **NSStatusItem** — the whole UI
 
 ## Gotchas
@@ -121,7 +152,7 @@ quill install --uninstall
   per-process picker if it bothers you).
 - If recordings come out silent, check System Settings → Privacy & Security →
   Screen & System Audio Recording.
-- Parakeet v2 is English-only. Other languages will come with the Whisper
-  engine.
+- The first model download needs an internet connection. Transcription does
+  not need a Hugging Face credential and runs locally after the model is cached.
 - The binary embeds its Info.plist (`__TEXT,__info_plist`) so TCC can
   attribute permissions to quill itself when running as a LaunchAgent.

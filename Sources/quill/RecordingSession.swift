@@ -1,9 +1,8 @@
 import Foundation
+import EscutaCore
 
 /// One meeting recording: a timestamped folder holding two independent tracks
-/// (mic = you, system = them) plus a meta.json written on clean stop. Tracks
-/// are separate on purpose — whisper does better on clean single-source audio,
-/// and two tracks give free two-party diarization.
+/// (mic = you, system = them) and durable session metadata.
 final class RecordingSession {
     let dir: URL
     let startedAt = Date()
@@ -30,6 +29,13 @@ final class RecordingSession {
         }
         try FileManager.default.createDirectory(at: candidate, withIntermediateDirectories: true)
         dir = candidate
+
+        let iso = ISO8601DateFormatter()
+        try SessionMetadata(
+            state: .recording,
+            started: iso.string(from: startedAt),
+            files: ["mic": "mic.caf", "system": "system.caf"]
+        ).write(to: dir)
     }
 
     /// Start both tracks. If the mic fails after the system tap started, the
@@ -44,8 +50,8 @@ final class RecordingSession {
         }
     }
 
-    /// Stop both tracks and write meta.json.
-    func stop() {
+    /// Stop both tracks and write pending session metadata.
+    func stop() throws {
         mic.stop()
         system.stop()
 
@@ -58,21 +64,17 @@ final class RecordingSession {
         let systemStart = system.firstBufferAt ?? startedAt
         let earliest = min(micStart, systemStart)
 
-        let meta: [String: Any] = [
-            "started": iso.string(from: startedAt),
-            "ended": iso.string(from: ended),
-            "duration_seconds": Int(ended.timeIntervalSince(startedAt)),
-            "files": ["mic": "mic.caf", "system": "system.caf"],
-            "start_offset_ms": [
+        let metadata = SessionMetadata(
+            state: .pending,
+            started: iso.string(from: startedAt),
+            ended: iso.string(from: ended),
+            durationSeconds: Int(ended.timeIntervalSince(startedAt)),
+            files: ["mic": "mic.caf", "system": "system.caf"],
+            startOffsetMs: [
                 "mic": Int(micStart.timeIntervalSince(earliest) * 1000),
                 "system": Int(systemStart.timeIntervalSince(earliest) * 1000),
-            ],
-        ]
-        if let data = try? JSONSerialization.data(
-            withJSONObject: meta,
-            options: [.prettyPrinted, .sortedKeys]
-        ) {
-            try? data.write(to: dir.appendingPathComponent("meta.json"))
-        }
+            ]
+        )
+        try metadata.write(to: dir)
     }
 }
